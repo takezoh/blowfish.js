@@ -24,6 +24,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+
 function Blowfish(k) {
 	if (k instanceof Object) {
 		this.P = k.P;
@@ -61,23 +62,59 @@ Blowfish.prototype.JSONInit=function(o) {
 };
 Blowfish.prototype.encrypt=function(t) {
 	var tl,tr,e,f=[];
+	var stack=[];
+	function map64(b) {
+		if (b==62) return '+';
+		else if (b==63) return '/';
+		else if (b>=52) return String.fromCharCode(b-4); // 0-9
+		else if (b>=26) return String.fromCharCode(b+71); // a-z
+		else return String.fromCharCode(b+65); // A-Z
+	}
+	function split2bit(i32) {
+		var b = [ i32>>24 & 0xff, i32>>16 & 0xff, i32>>8 & 0xff, i32 & 0xff ];
+		for (var i=0; i<4; ++i) {
+			stack = stack.concat([ b[i]>>6 & 0x03, b[i]>>4 & 0x03, b[i]>>2 & 0x03, b[i]>>0 & 0x03 ]);
+		}
+	}
 	for (var i=0; i<t.length; i+=8) {
 		tl = this.stringCode32(t.substr(i, 4));
 		tr = this.stringCode32(t.substr(i+4, 4));
 		e = this.encipher(tl,tr);
-		f.push(this.fromStringCode32(e.l));
-		f.push(this.fromStringCode32(e.r));
+		split2bit(e.l); split2bit(e.r);
+		while (stack.length >= 3) {
+			f.push(map64(stack.shift()<<4 | stack.shift()<<2 | stack.shift()));
+		}
+	}
+	if (stack.length) {
+		for (var i=3-stack.length; i>0; --i) stack.push(0);
+		f.push(map64(stack.shift()<<4 | stack.shift()<<2 | stack.shift()));
 	}
 	return f.join('');
 };
 Blowfish.prototype.decrypt=function(t) {
-	var tl,tr,e,f=[];
-	for (var i=0; i<t.length; i+=8) {
-		tl = this.stringCode32(t.substr(i, 4));
-		tr = this.stringCode32(t.substr(i+4, 4));
-		e = this.decipher(tl,tr);
-		f.push(this.fromStringCode32(e.l));
-		f.push(this.fromStringCode32(e.r));
+	var tl,tr,e,f=[],b=[];
+	var stack=[];
+	function map64(b) {
+		if (b==47) return 63; // "/"
+		else if (b==43) return 62; // "+"
+		else if (b>=97) return b-71; // a-z
+		else if (b>=65) return b-65; // A-Z
+		else return b+4; // 0-9
+	}
+	for (var i=0; i<t.length; ++i) {
+		var c = map64(t.charCodeAt(i));
+		stack = stack.concat([ c>>4 & 0x03, c>>2 & 0x03, c>>0 & 0x03 ]);
+		while (stack.length >= 4) {
+			b.push(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift());
+		}
+		while (b.length >= 8) {
+			e = this.decipher(
+				b.shift()<<24 | b.shift()<<16 | b.shift()<<8 | b.shift(),
+				b.shift()<<24 | b.shift()<<16 | b.shift()<<8 | b.shift()
+			);
+			f.push(this.fromStringCode32(e.l));
+			f.push(this.fromStringCode32(e.r));
+		}
 	}
 	return f.join('');
 };
@@ -120,60 +157,6 @@ Blowfish.prototype.swp=function(t) {
 	t.l = t.l ^ t.r;
 	t.r = t.l ^ t.r;
 	t.l = t.l ^ t.r;
-};
-Blowfish.prototype.base64encode=function(s){
-	var f = [];
-	var stack = [];
-	function map64(b) {
-		if (b==62) return '+';
-		else if (b==63) return '/';
-		else if (b>=52) return String.fromCharCode(b-4); // 0-9
-		else if (b>=26) return String.fromCharCode(b+71); // a-z
-		else return String.fromCharCode(b+65); // A-Z
-	}
-	for (var i=0; i<s.length; ++i) {
-		var c = s.charCodeAt(i);
-		stack = stack.concat([
-			c>>6 & 0x03,
-			c>>4 & 0x03,
-			c>>2 & 0x03,
-			c>>0 & 0x03
-		]);
-		while (stack.length >= 3) {
-			f.push(map64(stack.shift()<<4 | stack.shift()<<2 | stack.shift()));
-		}
-	}
-	if (stack.length) {
-		for (var i=3-stack.length; i>0; --i) stack.push(0);
-		f.push(map64(stack.shift()<<4 | stack.shift()<<2 | stack.shift()));
-	}
-	for (var i=0; i<f.length%4; ++i)
-		f.push("=");
-	return f.join('');
-};
-Blowfish.prototype.base64decode=function(s){
-	var f = [];
-	var stack = [];
-	function map64(b) {
-		if (b==47) return 63; // "/"
-		else if (b==43) return 62; // "+"
-		else if (b>=97) return b-71; // a-z
-		else if (b>=65) return b-65; // A-Z
-		else return b+4; // 0-9
-	}
-	for (var i=0; i<s.length; ++i) {
-		if (s[i] == "=") break;
-		var c = map64(s.charCodeAt(i));
-		stack = stack.concat([
-			c>>4 & 0x03,
-			c>>2 & 0x03,
-			c>>0 & 0x03
-		]);
-		while (stack.length >= 4) {
-			f.push(String.fromCharCode(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift()));
-		}
-	}
-	return f.join('');
 };
 Blowfish.prototype.P=function(k){
 	var P =[
