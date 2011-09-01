@@ -61,39 +61,75 @@ Blowfish.prototype.JSONInit=function(o) {
 	this.SBOX4 = o.SBOX4;
 };
 Blowfish.prototype.encrypt=function(t) {
-	var tl,tr,e,f=[];
-	var stack=[];
-	function map64(b) {
-		if (b==62) return '+';
-		else if (b==63) return '/';
-		else if (b>=52) return String.fromCharCode(b-4); // 0-9
-		else if (b>=26) return String.fromCharCode(b+71); // a-z
-		else return String.fromCharCode(b+65); // A-Z
-	}
-	function split2bit(i32) {
-		var b = [ i32>>24 & 0xff, i32>>16 & 0xff, i32>>8 & 0xff, i32 & 0xff ];
-		for (var i=0; i<4; ++i) {
-			stack = stack.concat([ b[i]>>6 & 0x03, b[i]>>4 & 0x03, b[i]>>2 & 0x03, b[i]>>0 & 0x03 ]);
+	var bf = this;
+	return this._encrypt(t, {
+		f: [],
+		push: function(l,r){
+			this.f.push(bf.fromStringCode32(l));
+			this.f.push(bf.fromStringCode32(r));
+		},
+		get: function(){
+			return this.f.join('');
 		}
-	}
+	});
+};
+Blowfish.prototype.encrypt64=function(t){
+	return this._encrypt(t, {
+		f: [],
+		stack: [],
+		map64: function(b){
+			if (b==62) return '+';
+			else if (b==63) return '/';
+			else if (b>=52) return String.fromCharCode(b-4); // 0-9
+			else if (b>=26) return String.fromCharCode(b+71); // a-z
+			else return String.fromCharCode(b+65); // A-Z
+		},
+		split2bit: function(i32) {
+			return [
+				i32>>30 & 0x03, i32>>28 & 0x03, i32>>26 & 0x03, i32>>24 & 0x03,
+				i32>>22 & 0x03, i32>>20 & 0x03, i32>>18 & 0x03, i32>>16 & 0x03,
+				i32>>14 & 0x03, i32>>12 & 0x03, i32>>10 & 0x03, i32>> 8 & 0x03,
+				i32>> 6 & 0x03, i32>> 4 & 0x03, i32>> 2 & 0x03, i32>> 0 & 0x03
+			];
+		},
+		push: function(l,r){
+			this.stack = this.stack.concat(this.split2bit(l), this.split2bit(r));
+			while (this.stack.length >= 3) {
+				this.f.push(this.map64(this.stack.shift()<<4 | this.stack.shift()<<2 | this.stack.shift()));
+			}
+		},
+		get: function() {
+			if (this.stack.length) {
+				for (var i=3-this.stack.length; i>0; --i) this.stack.push(0);
+				this.f.push(this.map64(this.stack.shift()<<4 | this.stack.shift()<<2 | this.stack.shift()));
+			}
+			return this.f.join('');
+		}
+	});
+};
+Blowfish.prototype._encrypt=function(t,o){
+	var tl,tr,e;
 	for (var i=0; i<t.length; i+=8) {
 		tl = this.stringCode32(t.substr(i, 4));
 		tr = this.stringCode32(t.substr(i+4, 4));
 		e = this.encipher(tl,tr);
-		split2bit(e.l); split2bit(e.r);
-		while (stack.length >= 3) {
-			f.push(map64(stack.shift()<<4 | stack.shift()<<2 | stack.shift()));
-		}
+		o.push(e.l, e.r);
 	}
-	if (stack.length) {
-		for (var i=3-stack.length; i>0; --i) stack.push(0);
-		f.push(map64(stack.shift()<<4 | stack.shift()<<2 | stack.shift()));
-	}
-	return f.join('');
+	return o.get();
 };
 Blowfish.prototype.decrypt=function(t) {
-	var tl,tr,e,f=[],b=[];
+	var tl,tr;
+	var o = this._decrypt();
+	for (var i=0; i<t.length; i+=8) {
+		tl = this.stringCode32(t.substr(i, 4));
+		tr = this.stringCode32(t.substr(i+4, 4));
+		o.push(tl,tr);
+	}
+	return o.get();
+};
+Blowfish.prototype.decrypt64=function(t){
 	var stack=[];
+	var o = this._decrypt();
 	function map64(b) {
 		if (b==47) return 63; // "/"
 		else if (b==43) return 62; // "+"
@@ -104,19 +140,34 @@ Blowfish.prototype.decrypt=function(t) {
 	for (var i=0; i<t.length; ++i) {
 		var c = map64(t.charCodeAt(i));
 		stack = stack.concat([ c>>4 & 0x03, c>>2 & 0x03, c>>0 & 0x03 ]);
-		while (stack.length >= 4) {
-			b.push(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift());
-		}
-		while (b.length >= 8) {
-			e = this.decipher(
-				b.shift()<<24 | b.shift()<<16 | b.shift()<<8 | b.shift(),
-				b.shift()<<24 | b.shift()<<16 | b.shift()<<8 | b.shift()
+		if (stack.length >= 32) {
+			o.push(
+				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<<24 |
+				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<<16 |
+				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<< 8 |
+				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<< 0,
+				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<<24 |
+				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<<16 |
+				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<< 8 |
+				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<< 0
 			);
-			f.push(this.fromStringCode32(e.l));
-			f.push(this.fromStringCode32(e.r));
 		}
 	}
-	return f.join('');
+	return o.get();
+};
+Blowfish.prototype._decrypt=function(){
+	var bf = this;
+	return {
+		f: [],
+		push: function(l,r){
+			var e = bf.decipher(l, r);
+			this.f.push(bf.fromStringCode32(e.l));
+			this.f.push(bf.fromStringCode32(e.r));
+		},
+		get: function(){
+			return this.f.join('');
+		}
+	};
 };
 Blowfish.prototype.stringCode32=function(t){
 	return t.charCodeAt(0) << 24 | t.charCodeAt(1) << 16 | t.charCodeAt(2) << 8 | t.charCodeAt(3);
