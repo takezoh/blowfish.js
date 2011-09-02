@@ -25,22 +25,18 @@
  * THE SOFTWARE.
  */
 
-function Blowfish(k) {
-	if (k instanceof Object) {
-		this.P = k.P;
-		this.SBOX1 = k.SBOX1;
-		this.SBOX2 = k.SBOX2;
-		this.SBOX3 = k.SBOX3;
-		this.SBOX4 = k.SBOX4;
-	} else {
-		this.init([
-			this.P=Blowfish.prototype.P(k),
-			this.SBOX1=Blowfish.prototype.SBOX1(),
-			this.SBOX2=Blowfish.prototype.SBOX2(),
-			this.SBOX3=Blowfish.prototype.SBOX3(),
-			this.SBOX4=Blowfish.prototype.SBOX4()
-		]);
+function Blowfish(config) {
+	this.config = config;
+	if (typeof(config) == "string") {
+		this.config = { key: config };
 	}
+	this.init([
+		this.P=Blowfish.prototype.P(this.config.key),
+		this.SBOX1=Blowfish.prototype.SBOX1(),
+		this.SBOX2=Blowfish.prototype.SBOX2(),
+		this.SBOX3=Blowfish.prototype.SBOX3(),
+		this.SBOX4=Blowfish.prototype.SBOX4()
+	]);
 };
 Blowfish.prototype.init=function(o){
 	var t = {l:0, r:0};
@@ -84,7 +80,7 @@ Blowfish.prototype.encrypt64=function(t){
 			else if (b>=26) return String.fromCharCode(b+71); // a-z
 			else return String.fromCharCode(b+65); // A-Z
 		},
-		split2bit: function(i32) {
+		extract32: function(i32) {
 			return [
 				i32>>30 & 0x03, i32>>28 & 0x03, i32>>26 & 0x03, i32>>24 & 0x03,
 				i32>>22 & 0x03, i32>>20 & 0x03, i32>>18 & 0x03, i32>>16 & 0x03,
@@ -93,7 +89,7 @@ Blowfish.prototype.encrypt64=function(t){
 			];
 		},
 		push: function(l,r){
-			this.stack = this.stack.concat(this.split2bit(l), this.split2bit(r));
+			this.stack = this.stack.concat(this.extract32(l), this.extract32(r));
 			while (this.stack.length >= 3) {
 				this.f.push(this.map64(this.stack.shift()<<4 | this.stack.shift()<<2 | this.stack.shift()));
 			}
@@ -109,7 +105,15 @@ Blowfish.prototype.encrypt64=function(t){
 };
 Blowfish.prototype._encrypt=function(t,o){
 	var tl,tr,e;
-	for (var i=0; i<t.length; i+=8) {
+	if (this.config.verification) {
+		for (var i=0; i<this.config.verification.length; i+=8) {
+			tl = this.stringCode32(this.config.verification.substr(i, 4));
+			tr = this.stringCode32(this.config.verification.substr(i+4, 4));
+			e = this.encipher(tl,tr);
+			o.push(e.l, e.r);
+		}
+	}
+	for (var i=0; i<t.length+4; i+=8) {
 		tl = this.stringCode32(t.substr(i, 4));
 		tr = this.stringCode32(t.substr(i+4, 4));
 		e = this.encipher(tl,tr);
@@ -137,20 +141,19 @@ Blowfish.prototype.decrypt64=function(t){
 		else if (b>=65) return b-65; // A-Z
 		else return b+4; // 0-9
 	}
+	function compact32() {
+		return (
+			(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<<24 |
+			(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<<16 |
+			(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<< 8 |
+			(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<< 0
+		);
+	}
 	for (var i=0; i<t.length; ++i) {
 		var c = map64(t.charCodeAt(i));
 		stack = stack.concat([ c>>4 & 0x03, c>>2 & 0x03, c>>0 & 0x03 ]);
 		if (stack.length >= 32) {
-			o.push(
-				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<<24 |
-				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<<16 |
-				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<< 8 |
-				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<< 0,
-				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<<24 |
-				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<<16 |
-				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<< 8 |
-				(stack.shift()<<6 | stack.shift()<<4 | stack.shift()<<2 | stack.shift())<< 0
-			);
+			o.push(compact32(), compact32());
 		}
 	}
 	return o.get();
@@ -164,8 +167,25 @@ Blowfish.prototype._decrypt=function(){
 			this.f.push(bf.fromStringCode32(e.l));
 			this.f.push(bf.fromStringCode32(e.r));
 		},
+		normalize: function(s){
+			var c = 0x00;
+			var i = s.length;
+			while (c == 0x00)
+				c = s.charCodeAt(--i);
+			if (i < s.length -1)
+				return s.substr(0, i+1);
+			return s;
+		},
 		get: function(){
-			return this.f.join('');
+			if (bf.config.verification) {
+				var len = Math.ceil(bf.config.verification.length / 8) * 2;
+				var check = this.f.slice(0, len).join('');
+				if (this.normalize(check) !== bf.config.verification) {
+					return false;
+				}
+				this.f = this.f.slice(len);
+			}
+			return this.normalize(this.f.join(''));
 		}
 	};
 };
